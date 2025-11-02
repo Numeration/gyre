@@ -19,16 +19,23 @@ async fn main() {
 
     let tx_cloned = tx.clone();
     let handle3 = tokio::spawn(async move {
-        for i in (1..32) {
+        for i in 1..32 {
             tx_cloned.publish(i).await;
         }
     });
 
+    let mut subscribed = tx.subscribe().await;
     let handle4 = tokio::spawn(async move {
-        for i in (32..64) {
+        for i in 32..64 {
             tx.publish(i).await;
         }
     });
 
-    let _ = join!(handle1, handle2, handle3, handle4);
+    let handle5 = tokio::spawn(async move {
+        while let Some(s) = subscribed.next().await {
+            println!("3: {:?}", *s);
+        }
+    });
+
+    let _ = join!(handle1, handle2, handle3, handle4, handle5);
 }

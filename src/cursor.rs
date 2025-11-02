@@ -26,11 +26,6 @@ impl Cursor {
     }
 
     #[inline]
-    pub(crate) fn store(&self, val: i64) {
-        self.value.store(val, Ordering::Release);
-    }
-
-    #[inline]
     pub(crate) fn relaxed(&self) -> i64 {
         self.value.load(Ordering::Relaxed)
     }

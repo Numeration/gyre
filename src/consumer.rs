@@ -1,5 +1,5 @@
 use crate::cursor::Cursor;
-use crate::{Bus, consumer_barrier, sequence_barrier};
+use crate::{sequence_barrier, Bus};
 use std::ops::Deref;
 use std::sync::Arc;
 
@@ -30,7 +30,6 @@ impl<'a, T> Drop for EventGuard<'a, T> {
 pub struct Consumer<T> {
     bus: Arc<Bus<T>>,
     sequence: sequence_barrier::Subscriber,
-    ids: Arc<consumer_barrier::ConsumerIds>,
     id: u64,
 }
 
@@ -39,7 +38,7 @@ unsafe impl<T: Send> Send for Consumer<T> {}
 impl<T> Clone for Consumer<T> {
     fn clone(&self) -> Self {
         // 为新消费者分配一个新的 ID
-        let id = self.ids.next_id();
+        let id = self.bus.ids.next_id();
 
         // 复制当前消费者的游标位置
         let consumers = self.bus.consumers.pin();
@@ -48,7 +47,6 @@ impl<T> Clone for Consumer<T> {
 
         Self {
             bus: Arc::clone(&self.bus),
-            ids: Arc::clone(&self.ids),
             id,
             sequence: self.sequence.clone(),
         }
@@ -58,15 +56,14 @@ impl<T> Clone for Consumer<T> {
 impl<T: Send + Sync + 'static> Consumer<T> {
     pub(crate) fn new(
         bus: Arc<Bus<T>>,
-        ids: Arc<consumer_barrier::ConsumerIds>,
         sequence: sequence_barrier::Subscriber,
+        init_cursor: i64
     ) -> Self {
-        let id = ids.next_id();
-        bus.consumers.pin().insert(id, Cursor::new(-1).into());
+        let id = bus.ids.next_id();
+        bus.consumers.pin().insert(id, Cursor::new(init_cursor).into());
 
         Self {
             bus,
-            ids,
             id,
             sequence,
         }

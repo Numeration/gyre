@@ -60,6 +60,10 @@ impl Publisher {
         // 通知所有等待的订阅者
         self.0.notify.notify_waiters();
     }
+
+    pub(crate) fn subscribe(&self) -> Subscriber {
+        Subscriber(self.0.clone())
+    }
 }
 
 #[derive(Debug, Clone)]

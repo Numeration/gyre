@@ -18,6 +18,7 @@ use crate::ring_buffer::RingBuffer;
 /// 核心总线结构，封装共享的环形缓冲区与消费者状态
 #[derive(Debug)]
 struct Bus<T> {
+    ids: consumer_barrier::ConsumerIds,
     buffer: RingBuffer<T>,
     consumers: papaya::HashMap<u64, CachePadded<Cursor>>,
 }
@@ -25,6 +26,7 @@ struct Bus<T> {
 impl<T: Send + Sync + 'static> Bus<T> {
     fn new(capacity: usize) -> Self {
         Self {
+            ids: consumer_barrier::ConsumerIds::default(),
             buffer: RingBuffer::new(capacity),
             consumers: Default::default(),
         }
@@ -33,7 +35,6 @@ impl<T: Send + Sync + 'static> Bus<T> {
 
 /// 创建一个发布者/消费者通道
 pub fn channel<E: Send + Sync + 'static>(capacity: usize) -> (Publisher<E>, Consumer<E>) {
-    let ids = Arc::new(consumer_barrier::ConsumerIds::default());
     let bus = Arc::new(Bus::new(capacity));
 
     // 创建 sequence barrier（控制事件发布与订阅同步）
@@ -41,6 +42,6 @@ pub fn channel<E: Send + Sync + 'static>(capacity: usize) -> (Publisher<E>, Cons
 
     (
         Publisher::new(Arc::clone(&bus), tx),
-        Consumer::new(bus, ids, rx),
+        Consumer::new(bus, rx, -1),
     )
 }
