@@ -32,7 +32,7 @@ impl SequenceController {
 
     async fn acquire_sequence(&self) -> SequenceGuard<'_> {
         let guard = self.claim_fence.acquire().await;
-        SequenceGuard(self.claimed.relaxed() + 1, guard)
+        SequenceGuard(self.claimed.relaxed(), guard)
     }
 
     async fn next_sequence(&self) -> i64 {
@@ -96,17 +96,19 @@ impl<T: Send + Sync + 'static> Publisher<T> {
                 return; // 没有消费者，不需要等待
             };
 
-            let Ok(offset) = usize::try_from(next_seq - min_seq) else {
-                drop(consumers);
-                tokio::task::yield_now().await;
-                continue;
-            };
+            if min_seq < next_seq {
+                let Ok(offset) = usize::try_from(next_seq - min_seq) else {
+                    drop(consumers);
+                    tokio::task::yield_now().await;
+                    continue;
+                };
 
-            if offset >= bus.buffer.capacity() {
-                // 缓冲区满，等待消费者消费
-                drop(consumers);
-                tokio::task::yield_now().await;
-                continue;
+                if offset >= bus.buffer.capacity() {
+                    // 缓冲区满，等待消费者消费
+                    drop(consumers);
+                    tokio::task::yield_now().await;
+                    continue;
+                }
             }
 
             break;
@@ -114,7 +116,7 @@ impl<T: Send + Sync + 'static> Publisher<T> {
 
         // 写入数据
         unsafe {
-            std::ptr::replace(bus.buffer.get(next_seq), Some(event));
+            *bus.buffer.get(next_seq) = Some(event);
         }
 
         // 发布
@@ -126,6 +128,7 @@ impl<T: Send + Sync + 'static> Publisher<T> {
         let controller = &self.controller;
         let next_seq = controller.acquire_sequence().await;
         let subscriber = controller.subscribe();
-        Consumer::new(bus, subscriber, *next_seq)
+
+        Consumer::new(bus, subscriber, *next_seq - 1)
     }
 }
