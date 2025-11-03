@@ -1,11 +1,12 @@
 use crate::cursor::Cursor;
-use crate::{Bus, sequence_barrier};
+use crate::{Bus, fence, sequence_barrier};
 use std::ops::Deref;
 use std::sync::Arc;
 
 pub struct EventGuard<'a, T> {
     value: *const T,
     consumer: &'a Consumer<T>,
+    _guard: fence::Guard<'a>,
 }
 
 unsafe impl<T: Sync> Sync for EventGuard<'_, T> {}
@@ -30,11 +31,36 @@ impl<'a, T> Drop for EventGuard<'a, T> {
     }
 }
 
+pub struct OwnedEventGuard<T> {
+    value: T,
+    id: u64,
+    bus: Arc<Bus<T>>,
+    _guard: fence::OwnedGuard,
+}
+
+impl<T> Deref for OwnedEventGuard<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
+impl<T> Drop for OwnedEventGuard<T> {
+    fn drop(&mut self) {
+        // 当事件被消费完成，消费者游标前进 1
+        let id = self.id;
+        let consumers = self.bus.consumers.pin();
+        consumers.get(&id).unwrap().fetch_add(1);
+    }
+}
+
 #[derive(Debug)]
 pub struct Consumer<T> {
     bus: Arc<Bus<T>>,
     sequence: sequence_barrier::Subscriber,
     id: u64,
+    fence: Arc<fence::Fence>,
 }
 
 unsafe impl<T: Send> Send for Consumer<T> {}
@@ -53,6 +79,7 @@ impl<T> Clone for Consumer<T> {
             bus: Arc::clone(&self.bus),
             id,
             sequence: self.sequence.clone(),
+            fence: Default::default(),
         }
     }
 }
@@ -67,11 +94,17 @@ impl<T: Send + Sync + 'static> Consumer<T> {
         bus.consumers
             .pin()
             .insert(id, Cursor::new(init_cursor).into());
+        let fence = Default::default();
 
-        Self { bus, id, sequence }
+        Self {
+            bus,
+            id,
+            sequence,
+            fence,
+        }
     }
 
-    pub async fn next(&mut self) -> Option<EventGuard<'_, T>> {
+    async fn take_event(&self) -> Option<&T> {
         let consumers = self.bus.consumers.pin_owned();
         let current_seq = consumers.get(&self.id).unwrap().relaxed();
 
@@ -87,9 +120,31 @@ impl<T: Send + Sync + 'static> Consumer<T> {
                 .expect("Event must exist before publish")
         };
 
+        Some(value)
+    }
+
+    pub async fn next(&mut self) -> Option<EventGuard<'_, T>> {
+        let _guard = self.fence.acquire().await;
+        let value = self.take_event().await?;
+
         Some(EventGuard {
             value,
             consumer: self,
+            _guard,
+        })
+    }
+}
+
+impl<T: Clone + Send + Sync + 'static> Consumer<T> {
+    pub async fn next_owned(&mut self) -> Option<OwnedEventGuard<T>> {
+        let _guard = self.fence.acquire_owned().await;
+        let value = self.take_event().await?;
+
+        Some(OwnedEventGuard {
+            value: T::clone(&value),
+            id: self.id,
+            bus: Arc::clone(&self.bus),
+            _guard,
         })
     }
 }
