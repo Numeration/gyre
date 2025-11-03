@@ -12,10 +12,7 @@ unsafe impl<E: Sync> Sync for RingBuffer<E> {}
 impl<E: Send + Sync + 'static> RingBuffer<E> {
     pub(crate) fn new(capacity: usize) -> Self {
         assert!(capacity >= 2, "capacity must be at least 2");
-        assert!(
-            capacity.is_power_of_two(),
-            "capacity must be a power of two"
-        );
+        assert!(capacity.is_power_of_two(), "capacity must be a power of 2");
 
         // 初始化槽位
         let slots = (0..capacity)

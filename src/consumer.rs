@@ -1,5 +1,5 @@
 use crate::cursor::Cursor;
-use crate::{sequence_barrier, Bus};
+use crate::{Bus, sequence_barrier};
 use std::ops::Deref;
 use std::sync::Arc;
 
@@ -57,16 +57,14 @@ impl<T: Send + Sync + 'static> Consumer<T> {
     pub(crate) fn new(
         bus: Arc<Bus<T>>,
         sequence: sequence_barrier::Subscriber,
-        init_cursor: i64
+        init_cursor: i64,
     ) -> Self {
         let id = bus.ids.next_id();
-        bus.consumers.pin().insert(id, Cursor::new(init_cursor).into());
+        bus.consumers
+            .pin()
+            .insert(id, Cursor::new(init_cursor).into());
 
-        Self {
-            bus,
-            id,
-            sequence,
-        }
+        Self { bus, id, sequence }
     }
 
     pub async fn next(&mut self) -> Option<EventGuard<'_, T>> {

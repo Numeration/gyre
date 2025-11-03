@@ -1,5 +1,5 @@
 use crate::cursor::Cursor;
-use crate::{Bus, sequence_barrier, Consumer};
+use crate::{Bus, Consumer, sequence_barrier};
 use crossbeam_utils::CachePadded;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -8,11 +8,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[derive(Debug)]
 struct SequenceController {
     claim_lock: CachePadded<AtomicBool>,
-    claimed: CachePadded<Cursor>,
+    claimed: Cursor,
     notifier: sequence_barrier::Publisher,
 }
 
-struct SequenceGuard<'a> (i64, &'a AtomicBool);
+struct SequenceGuard<'a>(i64, &'a AtomicBool);
 
 impl Deref for SequenceGuard<'_> {
     type Target = i64;
@@ -72,10 +72,19 @@ impl SequenceController {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Publisher<T> {
     bus: Arc<Bus<T>>,
     controller: Arc<SequenceController>,
+}
+
+impl<T> Clone for Publisher<T> {
+    fn clone(&self) -> Self {
+        Self {
+            bus: Arc::clone(&self.bus),
+            controller: Arc::clone(&self.controller),
+        }
+    }
 }
 
 impl<T: Send + Sync + 'static> Publisher<T> {
