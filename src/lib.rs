@@ -4,6 +4,7 @@ use std::sync::Arc;
 mod consumer;
 mod consumer_barrier;
 mod cursor;
+mod fence;
 mod publisher;
 mod ring_buffer;
 mod sequence;

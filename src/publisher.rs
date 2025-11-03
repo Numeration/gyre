@@ -1,18 +1,18 @@
 use crate::cursor::Cursor;
-use crate::{Bus, Consumer, sequence_barrier};
-use crossbeam_utils::CachePadded;
+use crate::fence::Fence;
+use crate::{Bus, Consumer, fence, sequence_barrier};
 use std::ops::Deref;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Debug)]
 struct SequenceController {
-    claim_lock: CachePadded<AtomicBool>,
+    claim_fence: Fence,
     claimed: Cursor,
     notifier: sequence_barrier::Publisher,
 }
 
-struct SequenceGuard<'a>(i64, &'a AtomicBool);
+#[allow(dead_code)]
+struct SequenceGuard<'a>(i64, fence::Guard<'a>);
 
 impl Deref for SequenceGuard<'_> {
     type Target = i64;
@@ -21,41 +21,22 @@ impl Deref for SequenceGuard<'_> {
     }
 }
 
-impl Drop for SequenceGuard<'_> {
-    fn drop(&mut self) {
-        self.1.store(false, Ordering::Release);
-    }
-}
-
 impl SequenceController {
     fn new(notifier: sequence_barrier::Publisher) -> Self {
         Self {
-            claim_lock: Default::default(),
+            claim_fence: Default::default(),
             claimed: Default::default(),
             notifier,
         }
     }
 
     async fn acquire_sequence(&self) -> SequenceGuard<'_> {
-        while self
-            .claim_lock
-            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            tokio::task::yield_now().await;
-        }
-
-        SequenceGuard(self.claimed.relaxed() + 1, &self.claim_lock)
-    }
-
-    async fn wait_lock_released(&self) {
-        while self.claim_lock.load(Ordering::Acquire) {
-            tokio::task::yield_now().await;
-        }
+        let guard = self.claim_fence.acquire().await;
+        SequenceGuard(self.claimed.relaxed() + 1, guard)
     }
 
     async fn next_sequence(&self) -> i64 {
-        self.wait_lock_released().await;
+        self.claim_fence.until_released().await;
         self.claimed.fetch_add(1)
     }
 
