@@ -8,6 +8,10 @@ pub struct EventGuard<'a, T> {
     consumer: &'a Consumer<T>,
 }
 
+unsafe impl<T: Sync> Sync for EventGuard<'_, T> {}
+
+unsafe impl<T> Send for EventGuard<'_, T> {}
+
 impl<'a, T> Deref for EventGuard<'a, T> {
     type Target = T;
 
