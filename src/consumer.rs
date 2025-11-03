@@ -1,6 +1,6 @@
 use crate::cursor::Cursor;
 use crate::{Bus, fence, sequence_barrier};
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 pub struct EventGuard<'a, T> {
@@ -31,11 +31,30 @@ impl<'a, T> Drop for EventGuard<'a, T> {
     }
 }
 
-pub struct OwnedEventGuard<T> {
-    value: T,
+pub struct OwnedGuard<T> {
     id: u64,
     bus: Arc<Bus<T>>,
     _guard: fence::OwnedGuard,
+}
+
+impl<T> Drop for OwnedGuard<T> {
+    fn drop(&mut self) {
+        // 当事件被消费完成，消费者游标前进 1
+        let id = self.id;
+        let consumers = self.bus.consumers.pin();
+        consumers.get(&id).unwrap().fetch_add(1);
+    }
+}
+
+pub struct OwnedEventGuard<T> {
+    value: T,
+    guard: OwnedGuard<T>,
+}
+
+impl<T> OwnedEventGuard<T> {
+    pub fn take(self) -> (OwnedGuard<T>, T) {
+        (self.guard, self.value)
+    }
 }
 
 impl<T> Deref for OwnedEventGuard<T> {
@@ -46,12 +65,9 @@ impl<T> Deref for OwnedEventGuard<T> {
     }
 }
 
-impl<T> Drop for OwnedEventGuard<T> {
-    fn drop(&mut self) {
-        // 当事件被消费完成，消费者游标前进 1
-        let id = self.id;
-        let consumers = self.bus.consumers.pin();
-        consumers.get(&id).unwrap().fetch_add(1);
+impl<T> DerefMut for OwnedEventGuard<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.value
     }
 }
 
@@ -142,9 +158,11 @@ impl<T: Clone + Send + Sync + 'static> Consumer<T> {
 
         Some(OwnedEventGuard {
             value: T::clone(&value),
-            id: self.id,
-            bus: Arc::clone(&self.bus),
-            _guard,
+            guard: OwnedGuard {
+                id: self.id,
+                bus: Arc::clone(&self.bus),
+                _guard,
+            },
         })
     }
 }
