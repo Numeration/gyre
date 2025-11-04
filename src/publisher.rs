@@ -107,6 +107,7 @@ impl<T: Send + Sync + 'static> Publisher<T> {
                 .map(Cursor::relaxed)
                 .min()
             else {
+                controller.publish(next_seq).await;
                 return; // 没有消费者，不需要等待
             };
 
