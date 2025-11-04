@@ -2,14 +2,11 @@ use crate::cursor::Cursor;
 use crate::fence::Fence;
 use crate::{Bus, Consumer, fence, sequence_barrier};
 use std::ops::Deref;
+use std::pin::Pin;
 use std::sync::Arc;
-
-#[derive(Debug)]
-struct SequenceController {
-    claim_fence: Fence,
-    claimed: Cursor,
-    notifier: sequence_barrier::Publisher,
-}
+use std::task::{Context, Poll};
+use futures::future::BoxFuture;
+use pin_project::pin_project;
 
 #[allow(dead_code)]
 struct SequenceGuard<'a>(i64, fence::Guard<'a>);
@@ -19,6 +16,13 @@ impl Deref for SequenceGuard<'_> {
     fn deref(&self) -> &Self::Target {
         &self.0
     }
+}
+
+#[derive(Debug)]
+struct SequenceController {
+    claim_fence: Fence,
+    claimed: Cursor,
+    notifier: sequence_barrier::Publisher,
 }
 
 impl SequenceController {
@@ -34,7 +38,6 @@ impl SequenceController {
         let guard = self.claim_fence.acquire().await;
         SequenceGuard(self.claimed.relaxed(), guard)
     }
-
     async fn next_sequence(&self) -> i64 {
         self.claim_fence.until_released().await;
         self.claimed.fetch_add(1)
@@ -50,6 +53,17 @@ impl SequenceController {
 
     fn subscribe(&self) -> sequence_barrier::Subscriber {
         self.notifier.subscribe()
+    }
+}
+
+#[pin_project]
+pub struct OwnedSubscribe<T>(#[pin] BoxFuture<'static, Consumer<T>>);
+
+impl<T> Future for OwnedSubscribe<T> {
+    type Output = Consumer<T>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.project().0.poll(cx)
     }
 }
 
@@ -130,5 +144,17 @@ impl<T: Send + Sync + 'static> Publisher<T> {
         let subscriber = controller.subscribe();
 
         Consumer::new(bus, subscriber, *next_seq - 1)
+    }
+
+    pub fn subscribe_owned(&self) -> OwnedSubscribe<T> {
+        let bus = self.bus.clone();
+        let controller = self.controller.clone();
+
+        OwnedSubscribe(Box::pin(async move {
+            let next_seq = controller.acquire_sequence().await;
+            let subscriber = controller.subscribe();
+
+            Consumer::new(bus, subscriber, *next_seq - 1)
+        }))
     }
 }
