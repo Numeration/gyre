@@ -27,7 +27,9 @@ impl<'a, T> Drop for EventGuard<'a, T> {
         // 当事件被消费完成，消费者游标前进 1
         let id = self.consumer.id;
         let consumers = self.consumer.bus.consumers.pin();
-        consumers.get(&id).unwrap().fetch_add(1);
+        if let Some(cursor) = consumers.get(&id) {
+            cursor.fetch_add(1);
+        }
     }
 }
 
@@ -42,7 +44,9 @@ impl<T> Drop for OwnedGuard<T> {
         // 当事件被消费完成，消费者游标前进 1
         let id = self.id;
         let consumers = self.bus.consumers.pin();
-        consumers.get(&id).unwrap().fetch_add(1);
+        if let Some(cursor) = consumers.get(&id) {
+            cursor.fetch_add(1);
+        }
     }
 }
 
