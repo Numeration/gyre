@@ -73,6 +73,7 @@ impl Subscriber {
     /// 等待直到游标 >= target
     pub(crate) async fn wait_until(&self, target: i64) -> Result<(), ()> {
         loop {
+            // Double check
             if self.0.cursor.relaxed() > target {
                 return Ok(());
             }
@@ -81,7 +82,17 @@ impl Subscriber {
                 return Err(());
             }
 
-            self.0.notify.notified().await;
+            let notified = self.0.notify.notified();
+
+            if self.0.cursor.relaxed() > target {
+                return Ok(());
+            }
+
+            if self.0.is_closed() {
+                return Err(());
+            }
+
+            notified.await;
         }
     }
 }
