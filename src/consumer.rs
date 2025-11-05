@@ -1,6 +1,6 @@
 use crate::cursor::Cursor;
-use crate::{Bus, fence, sequence_barrier};
-use std::ops::{Deref, DerefMut};
+use crate::{fence, sequence_barrier, Bus};
+use std::ops::Deref;
 use std::sync::Arc;
 
 pub struct EventGuard<'a, T> {
@@ -9,9 +9,9 @@ pub struct EventGuard<'a, T> {
     _guard: fence::Guard<'a>,
 }
 
-unsafe impl<T: Sync> Sync for EventGuard<'_, T> {}
+unsafe impl<T: Sync + Send> Sync for EventGuard<'_, T> {}
 
-unsafe impl<T> Send for EventGuard<'_, T> {}
+unsafe impl<T: Sync + Send> Send for EventGuard<'_, T> {}
 
 impl<'a, T> Deref for EventGuard<'a, T> {
     type Target = T;
@@ -25,53 +25,33 @@ impl<'a, T> Deref for EventGuard<'a, T> {
 impl<'a, T> Drop for EventGuard<'a, T> {
     fn drop(&mut self) {
         // 当事件被消费完成，消费者游标前进 1
-        let id = self.consumer.id;
-        let consumers = self.consumer.bus.consumers.pin();
-        if let Some(cursor) = consumers.get(&id) {
-            cursor.fetch_add(1);
-        }
-    }
-}
-
-pub struct OwnedGuard<T> {
-    id: u64,
-    bus: Arc<Bus<T>>,
-    _guard: fence::OwnedGuard,
-}
-
-impl<T> Drop for OwnedGuard<T> {
-    fn drop(&mut self) {
-        // 当事件被消费完成，消费者游标前进 1
-        let id = self.id;
-        let consumers = self.bus.consumers.pin();
-        if let Some(cursor) = consumers.get(&id) {
-            cursor.fetch_add(1);
-        }
+        self.consumer.advance()
     }
 }
 
 pub struct OwnedEventGuard<T> {
-    value: T,
-    guard: OwnedGuard<T>,
+    value: *const T,
+    consumer: Arc<Consumer<T>>,
+    _guard: fence::OwnedGuard,
 }
 
-impl<T> OwnedEventGuard<T> {
-    pub fn take(self) -> (OwnedGuard<T>, T) {
-        (self.guard, self.value)
-    }
-}
+unsafe impl<T: Sync + Send> Sync for OwnedEventGuard<T> {}
+
+unsafe impl<T: Sync + Send> Send for OwnedEventGuard<T> {}
 
 impl<T> Deref for OwnedEventGuard<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        &self.value
+        // Safety: value 始终指向有效的缓冲区元素，且只读访问
+        unsafe { &*self.value }
     }
 }
 
-impl<T> DerefMut for OwnedEventGuard<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.value
+impl<T> Drop for OwnedEventGuard<T> {
+    fn drop(&mut self) {
+        // 当事件被消费完成，消费者游标前进 1
+        self.consumer.advance()
     }
 }
 
@@ -83,7 +63,9 @@ pub struct Consumer<T> {
     fence: Arc<fence::Fence>,
 }
 
-unsafe impl<T: Send> Send for Consumer<T> {}
+unsafe impl<T: Sync + Send> Send for Consumer<T> {}
+
+unsafe impl<T: Sync + Send> Sync for Consumer<T> {}
 
 impl<T> Clone for Consumer<T> {
     fn clone(&self) -> Self {
@@ -104,7 +86,7 @@ impl<T> Clone for Consumer<T> {
     }
 }
 
-impl<T: Send + Sync + 'static> Consumer<T> {
+impl<T> Consumer<T> {
     pub(crate) fn new(
         bus: Arc<Bus<T>>,
         sequence: sequence_barrier::Subscriber,
@@ -121,6 +103,14 @@ impl<T: Send + Sync + 'static> Consumer<T> {
             id,
             sequence,
             fence,
+        }
+    }
+
+    fn advance(&self) {
+        let id = self.id;
+        let consumers = self.bus.consumers.pin();
+        if let Some(cursor) = consumers.get(&id) {
+            cursor.fetch_add(1);
         }
     }
 
@@ -153,20 +143,15 @@ impl<T: Send + Sync + 'static> Consumer<T> {
             _guard,
         })
     }
-}
 
-impl<T: Clone + Send + Sync + 'static> Consumer<T> {
-    pub async fn next_owned(&mut self) -> Option<OwnedEventGuard<T>> {
+    pub async fn next_owned(self: &Arc<Self>) -> Option<OwnedEventGuard<T>> {
         let _guard = self.fence.acquire_owned().await;
         let value = self.take_event().await?;
 
         Some(OwnedEventGuard {
-            value: T::clone(&value),
-            guard: OwnedGuard {
-                id: self.id,
-                bus: Arc::clone(&self.bus),
-                _guard,
-            },
+            value,
+            consumer: self.clone(),
+            _guard,
         })
     }
 }

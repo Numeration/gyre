@@ -82,7 +82,7 @@ impl<T> Clone for Publisher<T> {
     }
 }
 
-impl<T: Send + Sync + 'static> Publisher<T> {
+impl<T> Publisher<T> {
     pub(crate) fn new(bus: Arc<Bus<T>>, notifier: sequence_barrier::Publisher) -> Self {
         Self {
             bus,
@@ -147,6 +147,10 @@ impl<T: Send + Sync + 'static> Publisher<T> {
         Consumer::new(bus, subscriber, *next_seq - 1)
     }
 
+}
+
+impl<T:  Send + Sync + 'static> Publisher<T> {
+
     pub fn subscribe_owned(&self) -> OwnedSubscribe<T> {
         let bus = self.bus.clone();
         let controller = self.controller.clone();
@@ -158,4 +162,5 @@ impl<T: Send + Sync + 'static> Publisher<T> {
             Consumer::new(bus, subscriber, *next_seq - 1)
         }))
     }
+
 }
