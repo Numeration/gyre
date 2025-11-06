@@ -124,8 +124,9 @@ impl<T> Consumer<T> {
         }
 
         // 取出下一个事件
+        let buffer = self.bus.get_buffer().await;
         let value = unsafe {
-            (&*self.bus.buffer.get(current_seq + 1))
+            (&*buffer.get(current_seq + 1))
                 .as_ref()
                 .expect("Event must exist before publish")
         };

@@ -19,18 +19,27 @@ use crate::ring_buffer::RingBuffer;
 /// 核心总线结构，封装共享的环形缓冲区与消费者状态
 #[derive(Debug)]
 struct Bus<T> {
+    capacity: usize,
     ids: consumer_barrier::ConsumerIds,
-    buffer: RingBuffer<T>,
+    buffer: tokio::sync::OnceCell<RingBuffer<T>>,
     consumers: papaya::HashMap<u64, CachePadded<Cursor>>,
 }
 
-impl<T: Send + Sync + 'static> Bus<T> {
+impl<T> Bus<T> {
     fn new(capacity: usize) -> Self {
         Self {
+            capacity,
             ids: consumer_barrier::ConsumerIds::default(),
-            buffer: RingBuffer::new(capacity),
+            buffer: Default::default(),
             consumers: Default::default(),
         }
+    }
+
+    #[inline]
+    async fn get_buffer(&self) -> &RingBuffer<T> {
+        self.buffer.get_or_init(|| async {
+            RingBuffer::new(self.capacity)
+        }).await
     }
 }
 

@@ -95,6 +95,7 @@ impl<T> Publisher<T> {
         let bus = &self.bus;
         let controller = &self.controller;
         let next_seq = controller.next_sequence().await;
+        let buffer = bus.get_buffer().await;
 
         // 等待 ring buffer 有空位
         loop {
@@ -118,7 +119,7 @@ impl<T> Publisher<T> {
                     continue;
                 };
 
-                if offset >= bus.buffer.capacity() {
+                if offset >= buffer.capacity() {
                     // 缓冲区满，等待消费者消费
                     drop(consumers);
                     tokio::task::yield_now().await;
@@ -131,7 +132,7 @@ impl<T> Publisher<T> {
 
         // 写入数据
         unsafe {
-            *bus.buffer.get(next_seq) = Some(event);
+            *buffer.get(next_seq) = Some(event);
         }
 
         // 发布
