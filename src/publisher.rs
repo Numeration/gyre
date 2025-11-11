@@ -91,7 +91,6 @@ impl<T> Publisher<T> {
         // 等待 ring buffer 有空位
         loop {
             let waiter = controller.waiter();
-            controller.notify_one();
 
             let consumers = bus.consumers.pin_owned();
             let Some(min_seq) = consumers
@@ -107,6 +106,7 @@ impl<T> Publisher<T> {
             if min_seq < next_seq {
                 let Ok(offset) = usize::try_from(next_seq - min_seq) else {
                     drop(consumers);
+                    controller.notify_one();
                     waiter.await;
                     continue;
                 };
@@ -114,6 +114,7 @@ impl<T> Publisher<T> {
                 if offset >= buffer.capacity() {
                     // 缓冲区满，等待消费者消费
                     drop(consumers);
+                    controller.notify_one();
                     waiter.await;
                     continue;
                 }
