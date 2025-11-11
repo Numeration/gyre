@@ -1,6 +1,6 @@
 [package]
 name = "gyre"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 authors = ["Numeration<boxed87@outlook.com>"]
 description = "A lock-free asynchronous ring buffer inspired by the LMAX Disruptor."
