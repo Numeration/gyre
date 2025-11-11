@@ -40,7 +40,7 @@ impl Drop for Publisher {
 }
 
 impl Publisher {
-    pub(crate) fn spin_once(&self) {
+    pub(crate) fn notify_one(&self) {
         // 手动唤醒一个等待者
         self.0.notify.notify_one();
     }

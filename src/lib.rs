@@ -2,7 +2,7 @@ use crossbeam_utils::CachePadded;
 use std::sync::Arc;
 
 mod consumer;
-mod consumer_barrier;
+mod consumer_id;
 mod cursor;
 mod fence;
 mod publisher;
@@ -20,16 +20,18 @@ use crate::ring_buffer::RingBuffer;
 #[derive(Debug)]
 struct Bus<T> {
     capacity: usize,
-    ids: consumer_barrier::ConsumerIds,
+    ids: consumer_id::ConsumerIds,
     buffer: tokio::sync::OnceCell<RingBuffer<T>>,
     consumers: papaya::HashMap<u64, CachePadded<Cursor>>,
 }
 
 impl<T> Bus<T> {
     fn new(capacity: usize) -> Self {
+        assert!(capacity >= 2, "capacity must be at least 2");
+        assert!(capacity.is_power_of_two(), "capacity must be a power of 2");
         Self {
             capacity,
-            ids: consumer_barrier::ConsumerIds::default(),
+            ids: consumer_id::ConsumerIds::default(),
             buffer: Default::default(),
             consumers: Default::default(),
         }

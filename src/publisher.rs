@@ -44,7 +44,7 @@ impl SequenceController {
     }
 
     fn notify_one(&self) {
-        self.notifier.spin_once();
+        self.notifier.notify_one();
     }
 
     async fn publish(&self, sequence: i64) {
