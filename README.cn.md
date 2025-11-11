@@ -42,7 +42,7 @@ tokio = { version = "1", features = ["full"] }
 **2. 示例代码:**
 
 ```rust
-use gyre::channel;
+use gyre::{channel, Publisher, Consumer};
 use tokio::join;
 
 #[tokio::main]
