@@ -44,7 +44,7 @@ impl Drop for SequenceNotifier {
 
 impl SequenceNotifier {
     pub(crate) fn notify(&self) {
-        self.0.consumer_notify.notify_waiters();
+        self.0.consumer_notify.notify_one();
     }
 
     pub(crate) fn waiter(&self) -> Notified<'_> {
