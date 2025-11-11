@@ -1,8 +1,8 @@
 use crate::cursor::Cursor;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::sync::futures::Notified;
 use tokio::sync::Notify;
+use tokio::sync::futures::Notified;
 
 #[derive(Debug)]
 struct SharedState {
@@ -33,20 +33,20 @@ impl SharedState {
 }
 
 #[derive(Debug)]
-pub(crate) struct Publisher(Arc<SharedState>);
+pub(crate) struct SequenceNotifier(Arc<SharedState>);
 
-impl Drop for Publisher {
+impl Drop for SequenceNotifier {
     fn drop(&mut self) {
         // 发布者关闭时，唤醒所有等待者。
         self.0.close();
     }
 }
 
-impl Publisher {
+impl SequenceNotifier {
     pub(crate) fn notify(&self) {
         self.0.consumer_notify.notify_waiters();
     }
-    
+
     pub(crate) fn waiter(&self) -> Notified<'_> {
         self.0.publisher_notify.notified()
     }
@@ -67,15 +67,15 @@ impl Publisher {
         self.0.consumer_notify.notify_waiters();
     }
 
-    pub(crate) fn subscribe(&self) -> Subscriber {
-        Subscriber(self.0.clone())
+    pub(crate) fn subscribe(&self) -> SequenceWaiter {
+        SequenceWaiter(self.0.clone())
     }
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct Subscriber(Arc<SharedState>);
+pub(crate) struct SequenceWaiter(Arc<SharedState>);
 
-impl Subscriber {
+impl SequenceWaiter {
     pub(crate) fn notify(&self) {
         self.0.publisher_notify.notify_waiters();
     }
@@ -108,7 +108,7 @@ impl Subscriber {
 }
 
 /// 创建一个发布/订阅对
-pub(crate) fn channel(cursor: Cursor) -> (Publisher, Subscriber) {
+pub(crate) fn channel(cursor: Cursor) -> (SequenceNotifier, SequenceWaiter) {
     let shared = Arc::new(SharedState::new(cursor));
-    (Publisher(shared.clone()), Subscriber(shared))
+    (SequenceNotifier(shared.clone()), SequenceWaiter(shared))
 }

@@ -1,5 +1,6 @@
 use crate::cursor::Cursor;
-use crate::{fence, sequence_barrier, Bus};
+use crate::sequence_barrier::SequenceWaiter;
+use crate::{Bus, fence};
 use std::ops::Deref;
 use std::sync::Arc;
 
@@ -58,7 +59,7 @@ impl<T> Drop for OwnedEventGuard<T> {
 #[derive(Debug)]
 pub struct Consumer<T> {
     bus: Arc<Bus<T>>,
-    sequence: sequence_barrier::Subscriber,
+    sequence: SequenceWaiter,
     id: u64,
     fence: Arc<fence::Fence>,
 }
@@ -87,11 +88,7 @@ impl<T> Clone for Consumer<T> {
 }
 
 impl<T> Consumer<T> {
-    pub(crate) fn new(
-        bus: Arc<Bus<T>>,
-        sequence: sequence_barrier::Subscriber,
-        init_cursor: i64,
-    ) -> Self {
+    pub(crate) fn new(bus: Arc<Bus<T>>, sequence: SequenceWaiter, init_cursor: i64) -> Self {
         let id = bus.ids.next_id();
         bus.consumers
             .pin()

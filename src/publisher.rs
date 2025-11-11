@@ -1,12 +1,9 @@
 use crate::cursor::Cursor;
 use crate::fence::Fence;
+use crate::sequence_barrier::{SequenceNotifier, SequenceWaiter};
 use crate::{Bus, Consumer, fence, sequence_barrier};
 use std::ops::Deref;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
-use futures::future::BoxFuture;
-use pin_project::pin_project;
 use tokio::sync::futures::Notified;
 
 #[allow(dead_code)]
@@ -23,11 +20,11 @@ impl Deref for SequenceGuard<'_> {
 struct SequenceController {
     claim_fence: Fence,
     claimed: Cursor,
-    notifier: sequence_barrier::Publisher,
+    notifier: SequenceNotifier,
 }
 
 impl SequenceController {
-    fn new(notifier: sequence_barrier::Publisher) -> Self {
+    fn new(notifier: SequenceNotifier) -> Self {
         Self {
             claim_fence: Default::default(),
             claimed: Default::default(),
@@ -43,11 +40,11 @@ impl SequenceController {
         self.claim_fence.until_released().await;
         self.claimed.fetch_add(1)
     }
-    
-    fn waiter(&self) -> Notified<'_>{
+
+    fn waiter(&self) -> Notified<'_> {
         self.notifier.waiter()
     }
-    
+
     fn notify_one(&self) {
         self.notifier.notify();
     }
@@ -56,19 +53,8 @@ impl SequenceController {
         self.notifier.publish(sequence).await;
     }
 
-    fn subscribe(&self) -> sequence_barrier::Subscriber {
+    fn subscribe(&self) -> SequenceWaiter {
         self.notifier.subscribe()
-    }
-}
-
-#[pin_project]
-pub struct OwnedSubscribe<T>(#[pin] BoxFuture<'static, Consumer<T>>);
-
-impl<T> Future for OwnedSubscribe<T> {
-    type Output = Consumer<T>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.project().0.poll(cx)
     }
 }
 
@@ -88,7 +74,7 @@ impl<T> Clone for Publisher<T> {
 }
 
 impl<T> Publisher<T> {
-    pub(crate) fn new(bus: Arc<Bus<T>>, notifier: sequence_barrier::Publisher) -> Self {
+    pub(crate) fn new(bus: Arc<Bus<T>>, notifier: sequence_barrier::SequenceNotifier) -> Self {
         Self {
             bus,
             controller: Arc::new(SequenceController::new(notifier)),
@@ -153,21 +139,4 @@ impl<T> Publisher<T> {
 
         Consumer::new(bus, subscriber, *next_seq - 1)
     }
-
-}
-
-impl<T:  Send + Sync + 'static> Publisher<T> {
-
-    pub fn subscribe_owned(&self) -> OwnedSubscribe<T> {
-        let bus = self.bus.clone();
-        let controller = self.controller.clone();
-
-        OwnedSubscribe(Box::pin(async move {
-            let next_seq = controller.acquire_sequence().await;
-            let subscriber = controller.subscribe();
-
-            Consumer::new(bus, subscriber, *next_seq - 1)
-        }))
-    }
-
 }
