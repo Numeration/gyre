@@ -41,10 +41,6 @@ impl SequenceController {
         self.claimed.fetch_add(1)
     }
 
-    fn waiter(&self) -> Notified<'_> {
-        self.notifier.waiter()
-    }
-
     fn notify_one(&self) {
         self.notifier.notify();
     }
@@ -53,7 +49,11 @@ impl SequenceController {
         self.notifier.publish(sequence).await;
     }
 
-    fn subscribe(&self) -> SequenceWaiter {
+    fn publisher_waiter(&self) -> Notified<'_> {
+        self.notifier.waiter()
+    }
+
+    fn subscriber_waiter(&self) -> SequenceWaiter {
         self.notifier.subscribe()
     }
 }
@@ -90,7 +90,7 @@ impl<T> Publisher<T> {
 
         // 等待 ring buffer 有空位
         loop {
-            let waiter = controller.waiter();
+            let waiter = controller.publisher_waiter();
 
             let consumers = bus.consumers.pin_owned();
             let Some(min_seq) = consumers
@@ -137,7 +137,7 @@ impl<T> Publisher<T> {
         let bus = self.bus.clone();
         let controller = &self.controller;
         let next_seq = controller.acquire_sequence().await;
-        let subscriber = controller.subscribe();
+        let subscriber = controller.subscriber_waiter();
 
         Consumer::new(bus, subscriber, *next_seq - 1)
     }
