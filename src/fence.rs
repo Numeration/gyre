@@ -4,23 +4,24 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 pub struct Guard<'a>(&'a Fence);
 
-pub struct OwnedGuard(Arc<Fence>);
-
 impl<'a> Drop for Guard<'a> {
     fn drop(&mut self) {
         self.0.flag.store(false, Ordering::Release);
     }
 }
 
-#[derive(Debug, Default)]
-pub struct Fence {
-    flag: CachePadded<AtomicBool>,
-}
+pub struct OwnedGuard(Arc<Fence>);
 
 impl Drop for OwnedGuard {
     fn drop(&mut self) {
         self.0.flag.store(false, Ordering::Release);
     }
+}
+
+
+#[derive(Debug, Default)]
+pub struct Fence {
+    flag: CachePadded<AtomicBool>,
 }
 
 impl Fence {
