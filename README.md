@@ -104,4 +104,4 @@ Contributions of any kind are welcome! Whether it's submitting issues, opening p
 
 ## License
 
-This project is licensed under the [Apache 2.0 License](./LICENSE-APACHE).
+This project is licensed under the [Apache 2.0 License](./LICENSE).
