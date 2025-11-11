@@ -108,7 +108,7 @@ impl SequenceWaiter {
 }
 
 /// 创建一个发布/订阅对
-pub(crate) fn channel(cursor: Cursor) -> (SequenceNotifier, SequenceWaiter) {
+pub(crate) fn sequence_barrier_pair(cursor: Cursor) -> (SequenceNotifier, SequenceWaiter) {
     let shared = Arc::new(SharedState::new(cursor));
     (SequenceNotifier(shared.clone()), SequenceWaiter(shared))
 }

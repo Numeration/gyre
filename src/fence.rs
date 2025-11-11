@@ -18,7 +18,6 @@ impl Drop for OwnedGuard {
     }
 }
 
-
 #[derive(Debug, Default)]
 pub struct Fence {
     flag: CachePadded<AtomicBool>,

@@ -37,7 +37,7 @@ impl<T> Bus<T> {
 pub fn channel<E: Send + Sync + 'static>(capacity: usize) -> (Publisher<E>, Consumer<E>) {
     let bus = Arc::new(Bus::new(capacity));
 
-    let (tx, rx) = sequence_barrier::channel(Cursor::new(-1));
+    let (tx, rx) = sequence_barrier::sequence_barrier_pair(Cursor::new(-1));
 
     (
         Publisher::new(Arc::clone(&bus), tx),
