@@ -216,6 +216,17 @@ impl<T> Consumer<T> {
     ///
     /// This method requires `&mut self`, ensuring that event consumption for a single
     /// `Consumer` instance is strictly ordered.
+    ///
+    /// # Cancellation Safety
+    ///
+    /// This method **is** cancellation safe. It only waits for a new event to become
+    /// available but does not modify the consumer's state (i.e., its consumption cursor).
+    /// The cursor is only advanced when the returned `EventGuard` is dropped.
+    ///
+    /// If the future from `next()` is cancelled, no `EventGuard` is returned, the cursor
+    /// is not advanced, and the consumer's state remains consistent. The next call to
+    /// `next()` will simply attempt to receive the same event again. This makes it safe
+    /// to use in `tokio::select!`, timeouts, etc.
     pub async fn next(&mut self) -> Option<EventGuard<'_, T>> {
         let _guard = self.fence.acquire().await;
         let value = self.take_event().await?;
@@ -245,6 +256,16 @@ impl<T> Consumer<T> {
     ///     });
     /// }
     /// ```
+    ///
+    /// # Cancellation Safety
+    ///
+    /// This method **is** cancellation safe. It only waits for a new event to become
+    /// available but does not modify the consumer's state (i.e., its consumption cursor).
+    /// The cursor is only advanced when the returned `OwnedEventGuard` is dropped.
+    ///
+    /// If the future from `next_owned()` is cancelled, no `OwnedEventGuard` is returned,
+    /// the cursor is not advanced, and the consumer's state remains consistent. The next
+    /// call to `next_owned()` will simply attempt to receive the same event again.
     pub async fn next_owned(self: &Arc<Self>) -> Option<OwnedEventGuard<T>> {
         let _guard = self.fence.acquire_owned().await;
         let value = self.take_event().await?;

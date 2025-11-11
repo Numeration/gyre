@@ -140,6 +140,20 @@ impl<T> Publisher<T> {
     /// * `Err(T)`: If there are currently no active `Consumer`s, the event will not be
     ///   published and is returned as-is. This prevents losing events when there are
     ///   no subscribers.
+    ///
+    /// # Cancellation Safety
+    ///
+    /// This method is **not** cancellation safe. It first atomically claims a sequence
+    /// number for the new event and only then waits for space to become available in
+    /// the buffer. If the `publish` future is cancelled (e.g., via `tokio::select!` or
+    /// a timeout) while waiting on backpressure, the claimed sequence number will be
+    /// permanently lost, creating a "gap" in the event stream.
+    ///
+    /// This will cause all consumers to eventually stall indefinitely while waiting for the
+    /// missing event, leading to a **deadlock**.
+    ///
+    /// Therefore, you **must ensure** that the future returned by `publish` is driven
+    /// to completion and not dropped prematurely after it has started.
     pub async fn publish(&self, event: T) -> Result<(), T> {
         let bus = &self.bus;
         let controller = &self.controller;
@@ -207,6 +221,13 @@ impl<T> Publisher<T> {
     /// # Returns
     ///
     /// A new `Consumer` instance.
+    ///
+    /// # Cancellation Safety
+    ///
+    /// This method **is** cancellation safe. If the future is cancelled, it will be
+    /// before any changes to the shared state are made. The new consumer is only
+    /// registered with the bus *after* all `await` points have completed. It is safe
+    /// to use this method in contexts like `tokio::select!`.
     pub async fn subscribe(&self) -> Consumer<T> {
         let bus = self.bus.clone();
         let controller = &self.controller;
