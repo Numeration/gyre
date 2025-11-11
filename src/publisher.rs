@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use futures::future::BoxFuture;
 use pin_project::pin_project;
+use tokio::sync::futures::Notified;
 
 #[allow(dead_code)]
 struct SequenceGuard<'a>(i64, fence::Guard<'a>);
@@ -42,9 +43,13 @@ impl SequenceController {
         self.claim_fence.until_released().await;
         self.claimed.fetch_add(1)
     }
-
+    
+    fn waiter(&self) -> Notified<'_>{
+        self.notifier.waiter()
+    }
+    
     fn notify_one(&self) {
-        self.notifier.notify_one();
+        self.notifier.notify();
     }
 
     async fn publish(&self, sequence: i64) {
@@ -99,6 +104,7 @@ impl<T> Publisher<T> {
 
         // 等待 ring buffer 有空位
         loop {
+            let waiter = controller.waiter();
             controller.notify_one();
 
             let consumers = bus.consumers.pin_owned();
@@ -115,14 +121,14 @@ impl<T> Publisher<T> {
             if min_seq < next_seq {
                 let Ok(offset) = usize::try_from(next_seq - min_seq) else {
                     drop(consumers);
-                    tokio::task::yield_now().await;
+                    waiter.await;
                     continue;
                 };
 
                 if offset >= buffer.capacity() {
                     // 缓冲区满，等待消费者消费
                     drop(consumers);
-                    tokio::task::yield_now().await;
+                    waiter.await;
                     continue;
                 }
             }

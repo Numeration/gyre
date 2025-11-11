@@ -112,6 +112,7 @@ impl<T> Consumer<T> {
         if let Some(cursor) = consumers.get(&id) {
             cursor.fetch_add(1);
         }
+        self.sequence.notify();
     }
 
     async fn take_event(&self) -> Option<&T> {
