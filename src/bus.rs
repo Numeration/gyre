@@ -8,9 +8,8 @@ use std::sync::Arc;
 
 #[derive(Debug)]
 pub(crate) struct Bus<T> {
-    pub(crate) capacity: usize,
     pub(crate) ids: ConsumerIds,
-    pub(crate) buffer: tokio::sync::OnceCell<RingBuffer<T>>,
+    pub(crate) buffer: RingBuffer<T>,
     pub(crate) consumers: papaya::HashMap<u64, CachePadded<Cursor>>,
 }
 
@@ -19,18 +18,10 @@ impl<T> Bus<T> {
         assert!(capacity >= 2, "capacity must be at least 2");
         assert!(capacity.is_power_of_two(), "capacity must be a power of 2");
         Self {
-            capacity,
             ids: ConsumerIds::default(),
-            buffer: Default::default(),
+            buffer: RingBuffer::new(capacity),
             consumers: Default::default(),
         }
-    }
-
-    #[inline]
-    pub(crate) async fn get_buffer(&self) -> &RingBuffer<T> {
-        self.buffer
-            .get_or_init(|| async { RingBuffer::new(self.capacity) })
-            .await
     }
 }
 

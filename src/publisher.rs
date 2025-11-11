@@ -10,7 +10,9 @@ use tokio::sync::futures::Notified;
 struct SequenceGuard<'a>(i64, fence::Guard<'a>);
 
 impl Deref for SequenceGuard<'_> {
+    
     type Target = i64;
+    
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -49,7 +51,7 @@ impl SequenceController {
         self.notifier.publish(sequence).await;
     }
 
-    fn publisher_waiter(&self) -> Notified<'_> {
+    fn consumer_progress_waiter(&self) -> Notified<'_> {
         self.notifier.waiter()
     }
 
@@ -86,11 +88,11 @@ impl<T> Publisher<T> {
         let bus = &self.bus;
         let controller = &self.controller;
         let next_seq = controller.next_sequence().await;
-        let buffer = bus.get_buffer().await;
+        let buffer = &self.bus.buffer;
 
         // 等待 ring buffer 有空位
         loop {
-            let waiter = controller.publisher_waiter();
+            let waiter = controller.consumer_progress_waiter();
 
             let consumers = bus.consumers.pin_owned();
             let Some(min_seq) = consumers

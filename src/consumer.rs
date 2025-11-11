@@ -122,7 +122,7 @@ impl<T> Consumer<T> {
         }
 
         // 取出下一个事件
-        let buffer = self.bus.get_buffer().await;
+        let buffer = &self.bus.buffer;
         let value = unsafe {
             (&*buffer.get(current_seq + 1))
                 .as_ref()
