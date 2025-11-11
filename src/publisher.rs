@@ -1,7 +1,7 @@
 use crate::cursor::Cursor;
 use crate::fence::Fence;
 use crate::sequence_barrier::{SequenceNotifier, SequenceWaiter};
-use crate::{Bus, Consumer, fence, sequence_barrier};
+use crate::{Bus, Consumer, fence};
 use std::ops::Deref;
 use std::sync::Arc;
 use tokio::sync::futures::Notified;
@@ -74,7 +74,7 @@ impl<T> Clone for Publisher<T> {
 }
 
 impl<T> Publisher<T> {
-    pub(crate) fn new(bus: Arc<Bus<T>>, notifier: sequence_barrier::SequenceNotifier) -> Self {
+    pub(crate) fn new(bus: Arc<Bus<T>>, notifier: SequenceNotifier) -> Self {
         Self {
             bus,
             controller: Arc::new(SequenceController::new(notifier)),
@@ -82,7 +82,7 @@ impl<T> Publisher<T> {
     }
 
     /// 发布一个事件（等待消费者进度并写入 RingBuffer）
-    pub async fn publish(&self, event: T) {
+    pub async fn publish(&self, event: T) -> Result<(), T> {
         let bus = &self.bus;
         let controller = &self.controller;
         let next_seq = controller.next_sequence().await;
@@ -100,7 +100,7 @@ impl<T> Publisher<T> {
                 .min()
             else {
                 controller.publish(next_seq).await;
-                return; // 没有消费者，不需要等待
+                return Err(event); // 没有消费者，不需要等待
             };
 
             if min_seq < next_seq {
@@ -130,6 +130,7 @@ impl<T> Publisher<T> {
 
         // 发布
         controller.publish(next_seq).await;
+        Ok(())
     }
 
     pub async fn subscribe(&self) -> Consumer<T> {
