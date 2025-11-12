@@ -1,4 +1,3 @@
-// src/sequence_barrier.rs
 //! Provides the core synchronization primitive used within `gyre`: the sequence barrier.
 //!
 //! This module is the cornerstone of communication and synchronization between `Publisher`s
@@ -93,23 +92,12 @@ impl SequenceNotifier {
         self.0.publisher_notify.notified()
     }
 
-    /// Safely advances the global publish cursor to the specified `sequence`.
-    ///
-    /// This method uses a compare-exchange loop to ensure the cursor increments strictly
-    /// and sequentially. After a successful advance, it wakes up all waiting `Consumer`s.
+    pub(crate) fn cursor(&self) -> i64 {
+        self.0.cursor.relaxed()
+    }
+
     pub(crate) async fn publish(&self, sequence: i64) {
-        // Wait until the cursor is successfully advanced from `sequence - 1` to `sequence`.
-        // This loop ensures that publications are ordered.
-        while self
-            .0
-            .cursor
-            .compare_exchange(sequence - 1, sequence)
-            .is_err()
-        {
-            // If the CAS fails, it means another publisher is in the process of publishing,
-            // or the system state is unusual. Yield the current task and retry shortly.
-            tokio::task::yield_now().await;
-        }
+        self.0.cursor.store(sequence);
 
         // Notify all waiting subscribers
         self.0.consumer_notify.notify_waiters();
@@ -247,7 +235,10 @@ mod tests {
 
         // The task should complete quickly
         let result = timeout(Duration::from_millis(500), wait_task).await;
-        assert!(result.is_ok(), "Waiter waiting for cursor > 4 should be unblocked when cursor becomes 5");
+        assert!(
+            result.is_ok(),
+            "Waiter waiting for cursor > 4 should be unblocked when cursor becomes 5"
+        );
         assert!(result.unwrap().unwrap().is_ok());
     }
 
@@ -289,39 +280,6 @@ mod tests {
 
         // Verify closed state
         assert!(waiter.0.is_closed());
-    }
-
-    #[tokio::test]
-    async fn test_notifier_only_advances_sequentially() {
-        let (notifier, waiter) = sequence_barrier_pair(Cursor::new(0)); // Start from 0
-        let notifier = Arc::new(notifier);
-
-        // Try to skip sequence 1 and publish sequence 2 directly
-        let notifier_clone = notifier.clone();
-        let mut publish_task = tokio::spawn(async move {
-            notifier_clone.publish(2).await;
-        });
-
-        // The task should be blocked because current cursor = 0, target sequence = 2.
-        // It needs current cursor = 1 to advance.
-        assert!(
-            timeout(Duration::from_millis(50), &mut publish_task)
-                .await
-                .is_err(),
-            "Publish task should be blocked"
-        );
-
-        // Publish sequence 1
-        notifier.publish(1).await;
-
-        // The blocked task should now complete
-        timeout(Duration::from_millis(500), publish_task)
-            .await
-            .expect("Blocked publish should complete")
-            .unwrap();
-
-        // Verify the cursor has advanced to 2
-        assert_eq!(waiter.0.cursor.relaxed(), 2);
     }
 
     #[tokio::test]

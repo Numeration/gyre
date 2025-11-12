@@ -54,6 +54,23 @@ pub struct Fence {
 }
 
 impl Fence {
+    /// Attempts to acquire the lock immediately.
+    ///
+    /// Returns `Some(Guard)` if the lock was successfully acquired,
+    /// or `None` if the lock is currently held by another task.
+    #[inline]
+    pub fn try_acquire(&self) -> Option<Guard<'_>> {
+        if self
+            .flag
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            Some(Guard(self))
+        } else {
+            None
+        }
+    }
+
     /// Acquires the lock asynchronously.
     ///
     /// This method will spin-wait until the lock is successfully acquired and then
@@ -64,43 +81,38 @@ impl Fence {
         // `Acquire` ordering ensures that after successfully acquiring the lock, all
         // memory writes from other threads that occurred before they released the lock
         // are visible to the current thread.
-        while self
-            .flag
-            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
+        loop {
+            if let Some(guard) = self.try_acquire() {
+                return guard;
+            }
             // The lock is held by another task; yield to the scheduler and try again later.
             tokio::task::yield_now().await;
         }
+    }
 
-        Guard(self)
+    /// Attempts to acquire the lock immediately for `Arc<Fence>`.
+    ///
+    /// Returns `Some(OwnedGuard)` if successful, or `None` otherwise.
+    pub fn try_acquire_owned(self: &Arc<Self>) -> Option<OwnedGuard> {
+        if self
+            .flag
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            Some(OwnedGuard(Arc::clone(self)))
+        } else {
+            None
+        }
     }
 
     /// A variant of `acquire` for use with `Fence`s wrapped in an `Arc`.
     ///
     /// Returns an `OwnedGuard`.
     pub async fn acquire_owned(self: &Arc<Self>) -> OwnedGuard {
-        while self
-            .flag
-            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            tokio::task::yield_now().await;
-        }
-
-        OwnedGuard(Arc::clone(&self))
-    }
-
-    /// Asynchronously waits until the lock is released.
-    ///
-    /// Unlike `acquire`, this method does **not** acquire the lock. It simply waits
-    /// until the `flag` becomes `false`.
-    ///
-    /// This can be useful in scenarios where a task needs to wait for another task
-    /// holding the lock to complete an operation, but does not need to hold the
-    /// lock itself afterward.
-    pub async fn until_released(&self) {
-        while self.flag.load(Ordering::Acquire) {
+        loop {
+            if let Some(guard) = self.try_acquire_owned() {
+                return guard;
+            }
             tokio::task::yield_now().await;
         }
     }
@@ -189,44 +201,5 @@ mod tests {
 
         // Ensure Arc count is still correct
         assert_eq!(Arc::strong_count(&fence_arc), 1);
-    }
-
-    #[tokio::test]
-    async fn test_until_released_blocking() {
-        let fence = Arc::new(Fence::default());
-
-        // 1. Task 1 acquires and holds the lock
-        let fence_clone = fence.clone();
-        let task1 = tokio::spawn(async move {
-            let _guard = fence_clone.acquire().await;
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            // Implicitly dropped
-        });
-
-        // Wait for Task 1 to acquire the lock
-        tokio::task::yield_now().await;
-
-        // 2. Task 2 waits for release
-        let fence_clone = fence.clone();
-        let mut task2 = tokio::spawn(async move {
-            fence_clone.until_released().await;
-        });
-
-        // Ensure Task 2 does not complete within 50ms (it's blocked)
-        assert!(
-            timeout(Duration::from_millis(50), &mut task2)
-                .await
-                .is_err(),
-            "Task 2 should be blocked waiting for release"
-        );
-
-        // Wait for Task 1 to complete and release the lock
-        task1.await.unwrap();
-
-        // Task 2 should complete quickly
-        timeout(Duration::from_millis(50), task2)
-            .await
-            .expect("Task 2 should be unblocked")
-            .unwrap();
     }
 }

@@ -11,6 +11,7 @@ use crate::sequence_barrier::{SequenceNotifier, SequenceWaiter};
 use crate::{Bus, Consumer, fence};
 use std::ops::Deref;
 use std::sync::Arc;
+use tokio::sync::Notify;
 use tokio::sync::futures::Notified;
 
 /// An RAII guard used to lock the reading of the sequence number during a `subscribe` operation.
@@ -20,9 +21,9 @@ use tokio::sync::futures::Notified;
 /// that no other `publish` operations are modifying this sequence number while it is being read,
 /// thus avoiding race conditions.
 #[allow(dead_code)]
-struct SequenceGuard<'a>(i64, fence::Guard<'a>);
+struct ClaimGuard<'a>(i64, fence::Guard<'a>, &'a SequenceController);
 
-impl Deref for SequenceGuard<'_> {
+impl Deref for ClaimGuard<'_> {
     type Target = i64;
 
     fn deref(&self) -> &Self::Target {
@@ -30,17 +31,16 @@ impl Deref for SequenceGuard<'_> {
     }
 }
 
-/// Manages the publisher-side sequence number and notification mechanism.
-///
-/// This is the core controller within the `Publisher`, responsible for:
-/// 1.  Atomically incrementing the global publish sequence number (`claimed`).
-/// 2.  Using `claim_fence` to ensure that sequence claiming and subscription operations are mutually exclusive.
-/// 3.  Communicating with the `Consumer` side's `SequenceWaiter` via `notifier`
-///     to awaken consumers waiting for new events.
+impl Drop for ClaimGuard<'_> {
+    fn drop(&mut self) {
+        self.2.publisher_notify.notify_one();
+    }
+}
+
 #[derive(Debug)]
 struct SequenceController {
     claim_fence: Fence,
-    claimed: Cursor,
+    publisher_notify: Notify,
     notifier: SequenceNotifier,
 }
 
@@ -48,23 +48,21 @@ impl SequenceController {
     fn new(notifier: SequenceNotifier) -> Self {
         Self {
             claim_fence: Default::default(),
-            claimed: Default::default(),
+            publisher_notify: Notify::new(),
             notifier,
         }
     }
 
-    /// Gets the current highest claimed sequence number while holding a lock to prevent concurrent modification.
-    /// Primarily used by the `subscribe` method.
-    async fn acquire_sequence(&self) -> SequenceGuard<'_> {
-        let guard = self.claim_fence.acquire().await;
-        SequenceGuard(self.claimed.relaxed(), guard)
-    }
+    async fn claim_slot(&self) -> ClaimGuard<'_> {
+        loop {
+            let notified = self.publisher_notify.notified();
 
-    /// Atomically claims and increments the next available publish sequence number. This method first waits for
-    /// `claim_fence` to be released to ensure mutual exclusion with `subscribe` operations, preventing race conditions.
-    async fn next_sequence(&self) -> i64 {
-        self.claim_fence.until_released().await;
-        self.claimed.fetch_add(1)
+            if let Some(guard) = self.claim_fence.try_acquire() {
+                return ClaimGuard(self.notifier.cursor() + 1, guard, self);
+            }
+
+            notified.await;
+        }
     }
 
     /// Notifies a potentially waiting consumer.
@@ -123,42 +121,13 @@ impl<T> Publisher<T> {
         }
     }
 
-    /// Asynchronously publishes an event to the channel.
-    ///
-    /// This method first claims the next sequence number and then checks for sufficient
-    /// space in the ring buffer. If the slowest consumer has not yet processed older
-    /// events, causing the buffer to be full, this method will wait asynchronously
-    /// (**backpressure**) until space is freed.
-    ///
-    /// # Arguments
-    ///
-    /// * `event`: The event to be published.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(())`: If the event was successfully published.
-    /// * `Err(T)`: If there are currently no active `Consumer`s, the event will not be
-    ///   published and is returned as-is. This prevents losing events when there are
-    ///   no subscribers.
-    ///
-    /// # Cancellation Safety
-    ///
-    /// This method is **not** cancellation safe. It first atomically claims a sequence
-    /// number for the new event and only then waits for space to become available in
-    /// the buffer. If the `publish` future is cancelled (e.g., via `tokio::select!` or
-    /// a timeout) while waiting on backpressure, the claimed sequence number will be
-    /// permanently lost, creating a "gap" in the event stream.
-    ///
-    /// This will cause all consumers to eventually stall indefinitely while waiting for the
-    /// missing event, leading to a **deadlock**.
-    ///
-    /// Therefore, you **must ensure** that the future returned by `publish` is driven
-    /// to completion and not dropped prematurely after it has started.
     pub async fn publish(&self, event: T) -> Result<(), T> {
         let bus = &self.bus;
         let controller = &self.controller;
-        let next_seq = controller.next_sequence().await;
         let buffer = &self.bus.buffer;
+
+        let next_seq_guard = controller.claim_slot().await;
+        let next_seq = *next_seq_guard;
 
         // Wait for a free slot in the ring buffer
         loop {
@@ -197,14 +166,10 @@ impl<T> Publisher<T> {
             break;
         }
 
-        // Write the data
-        // SAFETY: We have already ensured this slot is safe via the backpressure check,
-        // and `next_sequence` guarantees we have exclusive write access for this sequence number.
         unsafe {
             *buffer.get(next_seq) = Some(event);
         }
 
-        // Publish is complete, update the global cursor and notify all consumers.
         controller.publish(next_seq).await;
         Ok(())
     }
@@ -233,7 +198,7 @@ impl<T> Publisher<T> {
         let controller = &self.controller;
 
         // Get the current highest claimed sequence number as the starting point for the new consumer.
-        let next_seq = controller.acquire_sequence().await;
+        let next_seq = controller.claim_slot().await;
         let subscriber = controller.subscriber_waiter();
 
         Consumer::new(bus, subscriber, *next_seq - 1)
