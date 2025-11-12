@@ -14,12 +14,16 @@ use std::sync::Arc;
 use tokio::sync::Notify;
 use tokio::sync::futures::Notified;
 
-/// An RAII guard used to lock the reading of the sequence number during a `subscribe` operation.
+/// An RAII guard that represents an exclusive claim on the next available publish slot.
 ///
-/// When `subscribe` is called, we need to get the latest published sequence number
-/// to ensure the new consumer starts at the correct position. `SequenceGuard` ensures
-/// that no other `publish` operations are modifying this sequence number while it is being read,
-/// thus avoiding race conditions.
+/// This guard is the cornerstone of the publisher's concurrency and cancellation safety.
+/// It is acquired by calling `SequenceController::claim_slot()`. While the guard is held,
+/// it guarantees that no other publisher can attempt to publish an event, ensuring strict
+/// serialization of publications.
+///
+/// The guard holds the sequence number for the slot it has claimed.
+/// When it is dropped, it automatically releases the underlying lock and notifies the next
+/// waiting publisher task that it can now attempt to claim a slot.
 #[allow(dead_code)]
 struct ClaimGuard<'a>(i64, fence::Guard<'a>, &'a SequenceController);
 
@@ -37,10 +41,35 @@ impl Drop for ClaimGuard<'_> {
     }
 }
 
+/// Manages the publisher-side sequencing and synchronization.
+///
+/// This controller is the core of the multi-producer and cancellation safety logic.
+/// It ensures that multiple publishers coordinate to publish events in a strict,
+/// sequential order, even under contention.
+///
+/// The main mechanism is a "turnstile" or "baton pass" system implemented with an
+/// asynchronous lock (`claim_fence`) and an async condition variable (`publisher_notify`).
+///
+/// 1. A publisher task calls `claim_slot()` to request permission to publish.
+/// 2. It waits asynchronously until it can acquire the `claim_fence` lock. This
+///    serializes all publishers, allowing only one to proceed at a time.
+/// 3. Upon acquiring the lock, it receives a `ClaimGuard`. This guard represents
+///    the exclusive right to perform the next publish operation.
+/// 4. When the `ClaimGuard` is dropped (either on successful publish or cancellation),
+///    it releases the `claim_fence` and notifies `publisher_notify`.
+/// 5. This notification wakes up the next publisher task waiting in `claim_slot()`,
+///    allowing it to take its turn.
 #[derive(Debug)]
 struct SequenceController {
+    /// An asynchronous mutex that ensures only one publisher can hold a `ClaimGuard`
+    /// at any given time. This is the primary mechanism for serializing publish operations.
     claim_fence: Fence,
+    /// An async condition variable that creates a fair wait queue for publishers.
+    /// When a `ClaimGuard` is dropped, this is notified to wake up the next task
+    /// waiting to acquire the `claim_fence`.
     publisher_notify: Notify,
+    /// The link to the `SequenceBarrier`, used to communicate with consumers. It provides
+    /// the globally visible cursor and the means to notify consumers of new events.
     notifier: SequenceNotifier,
 }
 
@@ -53,6 +82,19 @@ impl SequenceController {
         }
     }
 
+    /// Asynchronously acquires an exclusive lock for publishing the next event.
+    ///
+    /// This method ensures that only one publisher can be in the process of
+    /// preparing and committing a publish operation at any given time. It waits
+    /// until the `claim_fence` lock is available.
+    ///
+    /// Upon acquiring the lock, it calculates the next sequence number by reading
+    /// the current globally visible cursor and adding 1. It then returns a `ClaimGuard`
+    /// which holds the lock and the calculated sequence number.
+    ///
+    /// The lock is released automatically when the returned `ClaimGuard` is dropped.
+    /// This mechanism is critical for ensuring that `Publisher::publish` is
+    /// cancellation-safe.
     async fn claim_slot(&self) -> ClaimGuard<'_> {
         loop {
             let notified = self.publisher_notify.notified();
@@ -121,6 +163,33 @@ impl<T> Publisher<T> {
         }
     }
 
+    /// Asynchronously publishes an event to the channel.
+    ///
+    /// This method first claims an exclusive slot in the ring buffer, then waits if
+    /// necessary for the slowest consumer to advance (asynchronous backpressure).
+    /// Once a slot is confirmed to be free, it writes the event and makes it visible
+    /// to all consumers.
+    ///
+    /// # Arguments
+    ///
+    /// * `event`: The event to be published.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())`: If the event was successfully published.
+    /// * `Err(T)`: If there are currently no active `Consumer`s. In this case, the
+    ///   event is not published and is returned to the caller.
+    ///
+    /// # Cancellation Safety
+    ///
+    /// This method **is** cancellation safe. A publisher task first acquires a temporary,
+    /// exclusive lock to "claim" a slot. If the future is cancelled at any `await`
+    /// point (e.g., while waiting for backpressure), the lock is automatically
+    /// released, and the global state remains consistent. No sequence number "gap"
+    /// is created.
+    ///
+    /// The next publisher will simply acquire the lock and attempt to publish to the
+    /// same slot. It is safe to use this method in `tokio::select!`, timeouts, etc.
     pub async fn publish(&self, event: T) -> Result<(), T> {
         let bus = &self.bus;
         let controller = &self.controller;

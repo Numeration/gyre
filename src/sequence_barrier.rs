@@ -96,6 +96,14 @@ impl SequenceNotifier {
         self.0.cursor.relaxed()
     }
 
+    /// Publishes a sequence number, making it visible to all consumers.
+    ///
+    /// This method directly stores the `sequence` number, overwriting the previous one.
+    /// It assumes that the caller has already ensured exclusive access and that
+    /// `sequence` is the correct next value in the series. In `gyre`, this
+    /// exclusivity is guaranteed by the `claim_fence` in the `SequenceController`.
+    ///
+    /// After updating the cursor, it notifies all waiting consumers.
     pub(crate) async fn publish(&self, sequence: i64) {
         self.0.cursor.store(sequence);
 

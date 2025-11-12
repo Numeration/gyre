@@ -14,9 +14,10 @@
 //!     rather than removed.
 //! *   **Publisher:**
 //!     *   Responsible for writing events into the ring buffer.
-//!     *   Maintains a global publish sequence number that increments with each event.
-//!     *   Before publishing, it checks the cursor of the slowest consumer to ensure it
-//!       doesn't overwrite any events that haven't been processed, thus achieving **backpressure**.
+//!     *   Coordinates with other publishers to serialize access to the ring buffer,
+//!       ensuring events are published in a strict sequence.
+//!     *   Before committing a write, it checks the cursor of the slowest consumer to
+//!       ensure it doesn't overwrite any unprocessed events, thus achieving **backpressure**.
 //! *   **Consumer:**
 //!     *   Each consumer independently reads events from the ring buffer.
 //!     *   Each consumer maintains its own cursor to track which event it has processed up to.
@@ -47,10 +48,9 @@
 //! *   **RAII-driven Progress Updates:** The consumer's cursor is only advanced automatically
 //!     after the `EventGuard` is safely handled and dropped, leading to concise and less
 //!     error-prone code.
-//! *   **Concurrency Safety:** `Publisher` and `Consumer` are `Send` and can be moved between tasks.
-//!     `Publisher` can be freely cloned for multi-producer support. `Consumer`'s `.next()`
-//!     method takes `&mut self`, ensuring sequential processing for a single consumption stream.
-//!     For shared consumption logic across multiple tasks, use `Arc<Consumer>` with `.next_owned()`.
+//! *   **Cancellation Safe:** Core asynchronous operations like `publish`, `subscribe`,
+//!     and `next` are cancellation safe, making them robust and easy to integrate with
+//!     constructs like `tokio::select!` and timeouts.
 //!
 //! ## Usage
 //!
