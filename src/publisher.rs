@@ -114,8 +114,8 @@ impl SequenceController {
 
     /// Broadcasts the published status of an event (via its `sequence`) to all consumers.
     /// This updates the globally visible publish cursor and wakes up all waiting `Consumer`s.
-    async fn publish(&self, sequence: i64) {
-        self.notifier.publish(sequence).await;
+    fn publish(&self, sequence: i64) {
+        self.notifier.publish(sequence);
     }
 
     /// Gets a future that completes when a consumer makes progress.
@@ -210,7 +210,7 @@ impl<T> Publisher<T> {
                 .min()
             else {
                 // No consumers, no need to wait. Return the event directly.
-                controller.publish(next_seq).await;
+                controller.publish(next_seq);
                 return Err(event);
             };
 
@@ -239,7 +239,7 @@ impl<T> Publisher<T> {
             *buffer.get(next_seq) = Some(event);
         }
 
-        controller.publish(next_seq).await;
+        controller.publish(next_seq);
         Ok(())
     }
 

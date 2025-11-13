@@ -104,7 +104,7 @@ impl SequenceNotifier {
     /// exclusivity is guaranteed by the `claim_fence` in the `SequenceController`.
     ///
     /// After updating the cursor, it notifies all waiting consumers.
-    pub(crate) async fn publish(&self, sequence: i64) {
+    pub(crate) fn publish(&self, sequence: i64) {
         self.0.cursor.store(sequence);
 
         // Notify all waiting subscribers
@@ -200,11 +200,11 @@ mod tests {
         let (notifier, waiter) = sequence_barrier_pair(Cursor::new(-1));
 
         // First publish, sequence 0
-        notifier.publish(0).await;
+        notifier.publish(0);
         assert_eq!(waiter.0.cursor.relaxed(), 0);
 
         // Second publish, sequence 1
-        notifier.publish(1).await;
+        notifier.publish(1);
         assert_eq!(waiter.0.cursor.relaxed(), 1);
     }
 
@@ -226,7 +226,7 @@ mod tests {
 
         // Publish sequences 0 through 4
         for i in 0..=4 {
-            notifier.publish(i).await;
+            notifier.publish(i);
         }
 
         // The cursor is now at 4. The waiting task should still be blocked (waiting for > 4).
@@ -239,7 +239,7 @@ mod tests {
         );
 
         // Publish sequence 5
-        notifier.publish(5).await;
+        notifier.publish(5);
 
         // The task should complete quickly
         let result = timeout(Duration::from_millis(500), wait_task).await;
@@ -256,7 +256,7 @@ mod tests {
 
         // Publish up to sequence 10
         for i in 0..=10 {
-            notifier.publish(i).await;
+            notifier.publish(i);
         }
 
         // Immediately wait for a sequence > 5 (target is already met)
