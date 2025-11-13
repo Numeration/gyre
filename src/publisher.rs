@@ -107,11 +107,6 @@ impl SequenceController {
         }
     }
 
-    /// Notifies a potentially waiting consumer.
-    fn notify_one(&self) {
-        self.notifier.notify();
-    }
-
     /// Broadcasts the published status of an event (via its `sequence`) to all consumers.
     /// This updates the globally visible publish cursor and wakes up all waiting `Consumer`s.
     fn publish(&self, sequence: i64) {
@@ -218,7 +213,6 @@ impl<T> Publisher<T> {
                 let Ok(offset) = usize::try_from(next_seq - min_seq) else {
                     // This is an unlikely edge case, e.g., i64 overflow.
                     drop(consumers);
-                    controller.notify_one();
                     waiter.await;
                     continue;
                 };
@@ -226,7 +220,6 @@ impl<T> Publisher<T> {
                 if offset >= buffer.capacity() {
                     // Buffer is full, wait for consumers to free up space.
                     drop(consumers);
-                    controller.notify_one();
                     waiter.await;
                     continue;
                 }

@@ -80,12 +80,6 @@ impl Drop for SequenceNotifier {
 }
 
 impl SequenceNotifier {
-    /// Notifies all potentially waiting `Consumers`. This is used by the publisher
-    /// during backpressure to nudge a consumer forward.
-    pub(crate) fn notify(&self) {
-        self.0.consumer_notify.notify_waiters();
-    }
-
     /// Returns a `Notified` future that completes when a consumer makes progress.
     /// A `Publisher` will `await` this future during backpressure.
     pub(crate) fn waiter(&self) -> Notified<'_> {
