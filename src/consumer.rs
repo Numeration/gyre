@@ -287,6 +287,7 @@ impl<T> Drop for Consumer<T> {
     fn drop(&mut self) {
         // Remove from the global list of consumers
         self.bus.consumers.pin().remove(&self.id);
+        self.sequence.notify();
     }
 }
 
