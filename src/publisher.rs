@@ -205,7 +205,6 @@ impl<T> Publisher<T> {
                 .min()
             else {
                 // No consumers, no need to wait. Return the event directly.
-                controller.publish(next_seq);
                 return Err(event);
             };
 
