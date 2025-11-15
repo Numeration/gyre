@@ -104,4 +104,7 @@ Consumer 2 received: 2
 
 ## 许可证
 
-本项目采用 [Apache 2.0 许可证](LICENSE-APACHE)。
+本项目以 MIT 或 Apache 2.0 许可证分发（任选其一）：
+
+- [Apache License 2.0](LICENSE-APACHE)
+- [MIT License](LICENSE-MIT)
